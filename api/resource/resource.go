@@ -166,7 +166,9 @@ func (r *Resource) DeepCopy() *Resource {
 // the resource.
 // TODO: move to RNode, use GetMeta to improve performance.
 // TODO: make a version of mergeStringMaps that is build-annotation aware
-//   to avoid repeatedly setting refby and genargs annotations
+//
+//	to avoid repeatedly setting refby and genargs annotations
+//
 // Must remove the kustomize bit at the end.
 func (r *Resource) CopyMergeMetaDataFieldsFrom(other *Resource) error {
 	if err := r.SetLabels(
@@ -208,89 +210,6 @@ func (r *Resource) MergeDataMapFrom(o *Resource) error {
 		return r.mergeSecretDataFrom(o, vm)
 	}
 	return r.mergeConfigMapDataFrom(o, vm)
-}
-
-func (r *Resource) mergeConfigMapDataFrom(o *Resource, vm map[string]types.ValueMergeStrategy) error {
-	base := o.GetDataMap()
-	overlay := r.GetDataMap()
-	merged := make(map[string]string, len(base))
-
-	for k, v := range base {
-		merged[k] = v
-	}
-	for k, overlayVal := range overlay {
-		strategy, isValueMerge := vm[k]
-		baseVal, hasBase := merged[k]
-		if isValueMerge && hasBase {
-			m, err := mergeContent(baseVal, overlayVal, strategy)
-			if err != nil {
-				return fmt.Errorf("cannot merge key %q: %w", k, err)
-			}
-			merged[k] = m
-		} else {
-			merged[k] = overlayVal
-		}
-	}
-
-	r.SetDataMap(merged)
-	return nil
-}
-
-func (r *Resource) mergeSecretDataFrom(o *Resource, vm map[string]types.ValueMergeStrategy) error {
-	base, err := decodeBase64Map(o.GetDataMap())
-	if err != nil {
-		return err
-	}
-	overlay, err := decodeBase64Map(r.GetDataMap())
-	if err != nil {
-		return err
-	}
-
-	merged := make(map[string]string, len(base))
-	for k, v := range base {
-		merged[k] = v
-	}
-	for k, overlayVal := range overlay {
-		strategy, isValueMerge := vm[k]
-		baseVal, hasBase := merged[k]
-		if isValueMerge && hasBase {
-			m, err := mergeContent(baseVal, overlayVal, strategy)
-			if err != nil {
-				return fmt.Errorf("cannot merge key %q: %w", k, err)
-			}
-			merged[k] = m
-		} else {
-			merged[k] = overlayVal
-		}
-	}
-
-	if err := r.PipeE(kyaml.Clear(kyaml.DataField)); err != nil {
-		return err
-	}
-	return r.LoadMapIntoSecretData(merged)
-}
-
-func decodeBase64Map(m map[string]string) (map[string]string, error) {
-	decoded := make(map[string]string, len(m))
-	for key, val := range m {
-		decodedBytes, err := base64.StdEncoding.DecodeString(val)
-		if err != nil {
-			return nil, fmt.Errorf("cannot decode base64 for key %q: %w", key, err)
-		}
-		decoded[key] = string(decodedBytes)
-	}
-	return decoded, nil
-}
-
-func mergeContent(base, overlay string, strategy types.ValueMergeStrategy) (string, error) {
-	switch strategy {
-	case types.ValueMergeStrategyKV:
-		return mergeKVContent(base, overlay)
-	case types.ValueMergeStrategyYAML:
-		return mergeYamlContent(base, overlay)
-	default:
-		return "", fmt.Errorf("unknown value merge strategy: %q", strategy)
-	}
 }
 
 func (r *Resource) MergeBinaryDataMapFrom(o *Resource) {
@@ -648,6 +567,78 @@ func (r *Resource) ApplyFilter(f kio.Filter) error {
 		r.SetYNode(nil)
 	}
 	return err
+}
+
+func (r *Resource) mergeConfigMapDataFrom(o *Resource, vm map[string]types.ValueMergeStrategy) error {
+	merged, err := mergeStringMapsWithStrategy(o.GetDataMap(), r.GetDataMap(), vm)
+	if err != nil {
+		return err
+	}
+	r.SetDataMap(merged)
+	return nil
+}
+
+func (r *Resource) mergeSecretDataFrom(o *Resource, vm map[string]types.ValueMergeStrategy) error {
+	base, err := decodeBase64Map(o.GetDataMap())
+	if err != nil {
+		return err
+	}
+	overlay, err := decodeBase64Map(r.GetDataMap())
+	if err != nil {
+		return err
+	}
+	merged, err := mergeStringMapsWithStrategy(base, overlay, vm)
+	if err != nil {
+		return err
+	}
+	if err = r.PipeE(kyaml.Clear(kyaml.DataField)); err != nil {
+		return err
+	}
+	return r.LoadMapIntoSecretData(merged)
+}
+
+func mergeStringMapsWithStrategy(base, overlay map[string]string, vm map[string]types.ValueMergeStrategy) (map[string]string, error) {
+	merged := make(map[string]string, len(base))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, overlayVal := range overlay {
+		strategy, isValueMerge := vm[k]
+		baseVal, hasBase := merged[k]
+		if isValueMerge && hasBase {
+			m, err := mergeContent(baseVal, overlayVal, strategy)
+			if err != nil {
+				return nil, fmt.Errorf("cannot merge key %q: %w", k, err)
+			}
+			merged[k] = m
+		} else {
+			merged[k] = overlayVal
+		}
+	}
+	return merged, nil
+}
+
+func decodeBase64Map(m map[string]string) (map[string]string, error) {
+	decoded := make(map[string]string, len(m))
+	for key, val := range m {
+		decodedBytes, err := base64.StdEncoding.DecodeString(val)
+		if err != nil {
+			return nil, fmt.Errorf("cannot decode base64 for key %q: %w", key, err)
+		}
+		decoded[key] = string(decodedBytes)
+	}
+	return decoded, nil
+}
+
+func mergeContent(base, overlay string, strategy types.ValueMergeStrategy) (string, error) {
+	switch strategy {
+	case types.ValueMergeStrategyKV:
+		return mergeKVContent(base, overlay)
+	case types.ValueMergeStrategyYAML:
+		return mergeYamlContent(base, overlay)
+	default:
+		return "", fmt.Errorf("unknown value merge strategy: %q", strategy)
+	}
 }
 
 func mergeStringMaps(maps ...map[string]string) map[string]string {

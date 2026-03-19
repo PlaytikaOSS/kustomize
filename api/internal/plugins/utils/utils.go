@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	idAnnotation            = "kustomize.config.k8s.io/id"
-	HashAnnotation          = "kustomize.config.k8s.io/needs-hash"
-	BehaviorAnnotation      = "kustomize.config.k8s.io/behavior"
+	idAnnotation         = "kustomize.config.k8s.io/id"
+	HashAnnotation       = "kustomize.config.k8s.io/needs-hash"
+	BehaviorAnnotation   = "kustomize.config.k8s.io/behavior"
 	ValueMergeAnnotation = "kustomize.config.k8s.io/valueMerge"
 )
 
